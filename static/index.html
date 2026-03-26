@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Bodhi Research Chat</title>
+<style>
+    :root {
+        --bg-color: #f9f9f9;
+        --chat-bg: #ffffff;
+        --text-color: #333333;
+        --accent-color: #2563eb;
+        --accent-hover: #1d4ed8;
+        --system-msg: #f3f4f6;
+        --user-msg: #e0e7ff;
+        --ai-msg: #f8fafc;
+        --border-color: #e5e7eb;
+    }
+    body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+    }
+    .header {
+        background: var(--chat-bg);
+        padding: 1rem 2rem;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .header h1 {
+        margin: 0;
+        font-size: 1.5rem;
+    }
+    .upload-btn {
+        background: var(--accent-color);
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.9rem;
+    }
+    .upload-btn:hover {
+        background: var(--accent-hover);
+    }
+    #file-input {
+        display: none;
+    }
+    .main-content {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+    }
+    .sidebar {
+        width: 300px;
+        background: var(--chat-bg);
+        border-right: 1px solid var(--border-color);
+        padding: 1rem;
+        overflow-y: auto;
+    }
+    .sidebar h2 {
+        font-size: 1.2rem;
+        margin-top: 0;
+    }
+    .agent-option {
+        margin-bottom: 0.8rem;
+    }
+    .agent-option label {
+        display: flex;
+        align-items: flex-start;
+        cursor: pointer;
+        font-size: 0.95rem;
+    }
+    .agent-option input[type="checkbox"] {
+        margin-top: 0.2rem;
+        margin-right: 0.5rem;
+    }
+    .agent-desc {
+        color: #6b7280;
+        font-size: 0.8rem;
+        display: block;
+        margin-left: 1.6rem;
+        margin-top: 0.1rem;
+    }
+    .chat-container {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-color);
+    }
+    .chat-history {
+        flex: 1;
+        padding: 2rem;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+    }
+    .message {
+        max-width: 80%;
+        padding: 1rem 1.5rem;
+        border-radius: 12px;
+        line-height: 1.5;
+    }
+    .message.system {
+        background: var(--system-msg);
+        align-self: center;
+        text-align: center;
+        color: #4b5563;
+        font-size: 0.9rem;
+        border-radius: 20px;
+        padding: 0.5rem 1rem;
+    }
+    .message.user {
+        background: var(--user-msg);
+        align-self: flex-end;
+        border-bottom-right-radius: 4px;
+    }
+    .message.ai {
+        background: var(--ai-msg);
+        align-self: flex-start;
+        border-bottom-left-radius: 4px;
+        border: 1px solid var(--border-color);
+        width: 100%;
+    }
+    .ai-header {
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+        color: var(--accent-color);
+    }
+    .chat-input-container {
+        padding: 1rem 2rem;
+        background: var(--chat-bg);
+        border-top: 1px solid var(--border-color);
+        display: flex;
+        gap: 1rem;
+    }
+    .chat-input {
+        flex: 1;
+        padding: 0.75rem 1rem;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        font-size: 1rem;
+        outline: none;
+    }
+    .chat-input:focus {
+        border-color: var(--accent-color);
+    }
+    .send-btn {
+        background: var(--accent-color);
+        color: white;
+        border: none;
+        padding: 0 1.5rem;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: bold;
+    }
+    .send-btn:hover:not(:disabled) {
+        background: var(--accent-hover);
+    }
+    .send-btn:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+    }
+    /* Simple markdown styling */
+    .message.ai p { margin-top: 0; }
+    .message.ai ul { margin: 0.5rem 0; padding-left: 1.5rem; }
+</style>
+<!-- Include Marked.js to parse markdown strings -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+
+<div class="header">
+    <h1>🧠 Agent Bodhi Chat</h1>
+    <div>
+        <input type="file" id="file-input" accept="application/pdf">
+        <button class="upload-btn" onclick="document.getElementById('file-input').click()">Upload Paper (PDF)</button>
+    </div>
+</div>
+
+<div class="main-content">
+    <div class="sidebar">
+        <h2>Select Agents</h2>
+        <div id="agents-list">
+            <!-- Dynamically populated -->
+        </div>
+    </div>
+
+    <div class="chat-container">
+        <div class="chat-history" id="chat-history">
+            <div class="message system">Welcome! Upload a PDF to begin, then select agents and ask a question.</div>
+        </div>
+        <div class="chat-input-container">
+            <input type="text" id="chat-input" class="chat-input" placeholder="Ask your research agents..." disabled>
+            <button id="send-btn" class="send-btn" disabled>Send</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let isPaperLoaded = false;
+    let agentsData = [];
+
+    const agentsListEl = document.getElementById('agents-list');
+    const chatHistoryEl = document.getElementById('chat-history');
+    const chatInputEl = document.getElementById('chat-input');
+    const sendBtnEl = document.getElementById('send-btn');
+    const fileInputEl = document.getElementById('file-input');
+
+    // Fetch agents on load
+    fetch('/api/agents')
+        .then(res => res.json())
+        .then(data => {
+            agentsData = data;
+            agentsData.forEach(agent => {
+                const div = document.createElement('div');
+                div.className = 'agent-option';
+                div.innerHTML = `
+                    <label>
+                        <input type="checkbox" value="${agent.slug}" checked>
+                        <b>${agent.label}</b>
+                    </label>
+                    <span class="agent-desc">${agent.description}</span>
+                `;
+                agentsListEl.appendChild(div);
+            });
+        })
+        .catch(err => console.error("Failed to load agents", err));
+
+    function appendMessage(role, content, agentLabel = null) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `message ${role}`;
+
+        if (role === 'ai' && agentLabel) {
+            msgDiv.innerHTML = `<div class="ai-header">${agentLabel}</div><div class="md-content">${marked.parse(content)}</div>`;
+        } else if (role === 'user') {
+            msgDiv.textContent = content;
+        } else {
+            msgDiv.textContent = content; // System
+        }
+
+        chatHistoryEl.appendChild(msgDiv);
+        chatHistoryEl.scrollTop = chatHistoryEl.scrollHeight;
+    }
+
+    fileInputEl.addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        appendMessage('system', `Uploading and analyzing ${file.name}...`);
+
+        try {
+            const res = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+
+            if (res.ok) {
+                isPaperLoaded = true;
+                chatInputEl.disabled = false;
+                sendBtnEl.disabled = false;
+                appendMessage('system', `Successfully loaded Context for: ${file.name}. Ask a question!`);
+            } else {
+                appendMessage('system', `Error: ${data.detail || 'Upload failed'}`);
+            }
+        } catch (err) {
+            appendMessage('system', `Upload failed: ${err.message}`);
+        }
+    });
+
+    async function sendMessage() {
+        const text = chatInputEl.value.trim();
+        if (!text || !isPaperLoaded) return;
+
+        // Get selected agents
+        const checkboxes = agentsListEl.querySelectorAll('input[type="checkbox"]:checked');
+        const selectedSlugs = Array.from(checkboxes).map(cb => cb.value);
+
+        if (selectedSlugs.length === 0) {
+            alert("Please select at least one agent!");
+            return;
+        }
+
+        appendMessage('user', text);
+        chatInputEl.value = '';
+
+        // Show loading state
+        chatInputEl.disabled = true;
+        sendBtnEl.disabled = true;
+        appendMessage('system', 'Agents are thinking...');
+        // Temporary hack to remove the last system item when done
+        const loadingMsg = chatHistoryEl.lastChild;
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: text,
+                    agents: selectedSlugs
+                })
+            });
+
+            const data = await res.json();
+
+            // Remove loading msg
+            chatHistoryEl.removeChild(loadingMsg);
+
+            if (res.ok) {
+                // Return results for each agent
+                for (const [slug, responseText] of Object.entries(data.responses)) {
+                    const agentInfo = agentsData.find(a => a.slug === slug);
+                    const label = agentInfo ? agentInfo.label : slug;
+                    appendMessage('ai', responseText, label);
+                }
+            } else {
+                appendMessage('system', `Error: ${data.detail || 'Chat failed'}`);
+            }
+        } catch (err) {
+            chatHistoryEl.removeChild(loadingMsg);
+            appendMessage('system', `Failed to send request: ${err.message}`);
+        } finally {
+            chatInputEl.disabled = false;
+            sendBtnEl.disabled = false;
+            chatInputEl.focus();
+        }
+    }
+
+    sendBtnEl.addEventListener('click', sendMessage);
+    chatInputEl.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+</script>
+</body>
+</html>

@@ -24,9 +24,18 @@ ProgressCallback = Callable[[str, float], None]
 
 
 class ResearchOrchestrator:
+    CHAT_AGENT_GUIDANCE = {
+        "citations": "You audit references, cite arXiv IDs when possible, and highlight missing sources.",
+        "methodology": "You critique experimental design, statistical rigor, and reproducibility gaps.",
+        "sota": "You compare claims to the current state of the art using hybrid search results.",
+        "novelty": "You assess originality, impact, and incremental aspects versus prior work.",
+        "glossary": "You explain technical terms in plain but precise language for practitioners.",
+        "related": "You surface nearby research directions and links for deeper reading.",
+    }
+
     def __init__(self, gemini_key: str, tavily_key: str):
         self.client = genai.Client(api_key=gemini_key)
-        self.model = "gemini-3.1-flash-lite-preview"
+        self.model = "gemma-3-27b-it"#"gemini-3.1-flash-lite-preview" #"gemini-2.5-flash-lite"
         self.tavily = TavilyClient(api_key=tavily_key)
 
         self.citation_agent = CitationAgent(self.client, self.model)
@@ -35,6 +44,8 @@ class ResearchOrchestrator:
         self.novelty_agent = NoveltyAgent(self.client, self.model, self.tavily)
         self.glossary_agent = GlossaryAgent(self.client, self.model)
         self.related_work_agent = RelatedWorkAgent(self.client, self.model, self.tavily)
+
+        self._context = {}
 
     def analyze_paper(
         self,
@@ -203,3 +214,62 @@ Return ONLY the JSON."""
 
         return insights
 
+    def get_context_snapshot(self) -> Dict[str, object]:
+        return dict(self._context)
+
+    def load_pdf_context(self, pdf_bytes: bytes) -> None:
+        """Loads a PDF and extracts text/summary without running the full analysis pipeline."""
+        summary_resp = self.client.models.generate_content(
+            model=self.model,
+            contents=[
+                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                "Provide a comprehensive 400-word technical summary of this paper including: research question, methodology, key findings, and contributions."
+            ]
+        )
+
+        full_text_resp = self.client.models.generate_content(
+            model=self.model,
+            contents=[
+                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                "Extract all text from this paper including abstract, methodology, results, and discussion sections."
+            ]
+        )
+
+        self._context = {
+            "summary": summary_resp.text,
+            "full_text": full_text_resp.text,
+            "pdf_bytes": pdf_bytes
+        }
+
+    def chat_with_agents(self, agent_slugs: List[str], instruction: str) -> Dict[str, str]:
+        context = self.get_context_snapshot()
+        if not context.get("full_text"):
+            raise ValueError("No paper context available. Upload a PDF first.")
+
+        responses = {}
+        # We process each agent's response
+        for slug in agent_slugs:
+            primer = self.CHAT_AGENT_GUIDANCE.get(slug, "You are a helpful research agent.")
+            prompt = f"{primer}\n\nPaper summary:\n{context['summary']}\n\nRelevant paper excerpt:\n{str(context['full_text'])[:8000]}\n\nResearcher instruction:\n{instruction}\n\nRespond in Markdown with concise bullet points."
+
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt
+            )
+            responses[slug] = response.text.strip()
+
+        return responses
+
+    def chat_with_agent(self, agent_slug: str, instruction: str, usage_hint: str) -> str:
+        context = self.get_context_snapshot()
+        if not context.get("full_text"):
+            raise ValueError("No paper context available. Upload a PDF first.")
+
+        primer = self.CHAT_AGENT_GUIDANCE.get(agent_slug, "You are a helpful research agent.")
+        prompt = f"{primer}\n\nPaper summary:\n{context['summary']}\n\nRelevant paper excerpt:\n{str(context['full_text'])[:8000]}\n\nResearcher instruction:\n{instruction}\n\n{usage_hint}\n\nRespond in Markdown."
+
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt
+        )
+        return response.text.strip()

@@ -49,9 +49,27 @@ Return as JSON array:
             )
             json_text = self._extract_json(response.text)
             weaknesses_data = json.loads(json_text)
-            return [Weakness(**w) for w in weaknesses_data]
+
+            sanitized: List[Weakness] = []
+            for raw in weaknesses_data if isinstance(weaknesses_data, list) else []:
+                sanitized.append(
+                    Weakness(
+                        category=str(raw.get("category") or "Uncategorized").strip(),
+                        description=str(raw.get("description") or "No description provided").strip(),
+                        severity=self._normalize_severity(raw.get("severity")),
+                        suggestion=str(raw.get("suggestion") or "Clarify methodology or add missing experimental detail.").strip(),
+                    )
+                )
+            return sanitized
         except Exception as e:
             logger.error(f"Methodology analysis error: {e}")
             return []
 
-
+    def _normalize_severity(self, raw_value: object) -> str:
+        allowed = {"Critical", "Major", "Minor"}
+        if not raw_value:
+            return "Major"
+        normalized = str(raw_value).strip().title()
+        if normalized not in allowed:
+            return "Major"
+        return normalized
