@@ -31,6 +31,7 @@ class ResearchOrchestrator:
         "novelty": "You assess originality, impact, and incremental aspects versus prior work.",
         "glossary": "You explain technical terms in plain but precise language for practitioners.",
         "related": "You surface nearby research directions and links for deeper reading.",
+        "conference": "You find relevant upcoming conferences and evaluate if this paper fits their Call for Papers (CFP) requirements.",
     }
 
     def __init__(self, gemini_key: str, tavily_key: str):
@@ -249,6 +250,63 @@ Return ONLY the JSON."""
         responses = {}
         # We process each agent's response
         for slug in agent_slugs:
+            if slug == "conference":
+                # Marionette-style search implementation
+                logs = ["🔍 **Agent Action:** Initializing Conference Matchmaker...", "🕸️ **Agent Action:** Analyzing paper abstract to determine research area..."]
+                
+                # Determine search query
+                query_prompt = f"Based on this paper summary, generate a short 3-5 word google search query to find relevant upcoming academic AI/CS conferences specifically with active 'Call for Papers' or 'CFP' (e.g. 'upcoming LLM conferences CFP 2026').\nSummary: {context['summary'][:1000]}"
+                query_resp = self.client.models.generate_content(model=self.model, contents=query_prompt).text.strip().replace('"', '')
+                
+                logs.append(f"🌐 **Agent Action:** Searching Web via Tavily for: `{query_resp}`...")
+                try:
+                    search_results = self.tavily.search(query=query_resp, search_depth="advanced", max_results=3)
+                    context_str = "\n\n".join([f"Source: {res['url']}\nContent: {res['content']}" for res in search_results.get('results', [])])
+                    logs.append(f"✅ **Agent Action:** Found {len(search_results.get('results', []))} relevant conference pages.")
+                except Exception as e:
+                    logs.append(f"⚠️ **Agent Action:** Web search failed ({str(e)}). Falling back to internal knowledge.")
+                    context_str = "No external results available."
+
+                logs.append("🧠 **Agent Action:** Evaluating paper against conference Call for Papers (CFP)...")
+                
+                primer = self.CHAT_AGENT_GUIDANCE["conference"]
+                prompt = f"{primer}\n\nSearch Results for Conferences:\n{context_str}\n\nPaper summary:\n{context['summary']}\n\nResearcher instruction:\n{instruction}\n\nRespond in Markdown. Include a section at the top titled 'Agent Activity Log' where you list the steps taken."
+                
+                final_resp = self.client.models.generate_content(model=self.model, contents=prompt).text.strip()
+                
+                # Prepend the live logs so the user sees the "marionette" effect
+                formatted_logs = "\n".join(logs)
+                responses[slug] = f"### 🕵️‍♂️ Agent Live Log\n{formatted_logs}\n\n---\n\n{final_resp}"
+                continue
+
+            if slug == "glossary":
+                # Marionette-style Glossary Search
+                logs = ["🔍 **Agent Action:** Scanning text for complex jargon...", "🕸️ **Agent Action:** Identifying specific terms requiring clear definitions..."]
+                
+                # Determine terms to look up
+                terms_prompt = f"Identify 2-3 highly technical or obscure terms from this paper summary that need external plain-language definitions.\nSummary: {context['summary'][:1000]}\n\nReturn EXACTLY a comma-separated list of 2-3 terms (e.g. 'LoRA, cross-entropy loss'). Do not include any other text."
+                terms_resp = self.client.models.generate_content(model=self.model, contents=terms_prompt).text.strip()
+                
+                logs.append(f"🌐 **Agent Action:** Searching Web via Tavily definitions for: `{terms_resp}`...")
+                try:
+                    search_results = self.tavily.search(query=f"define {terms_resp} machine learning simple explanation", search_depth="basic", max_results=2)
+                    context_str = "\n\n".join([f"Source: {res['url']}\nContent: {res['content']}" for res in search_results.get('results', [])])
+                    logs.append(f"✅ **Agent Action:** Found real-world plain-language explanations from {len(search_results.get('results', []))} sources.")
+                except Exception as e:
+                    logs.append(f"⚠️ **Agent Action:** Web search failed ({str(e)}). Relying on internal knowledge.")
+                    context_str = "No external results available."
+
+                logs.append("🧠 **Agent Action:** Synthesizing final accessible glossary...")
+                
+                primer = self.CHAT_AGENT_GUIDANCE["glossary"]
+                prompt = f"{primer}\n\nWeb Search Results for Terms:\n{context_str}\n\nPaper summary:\n{context['summary']}\n\nResearcher instruction:\n{instruction}\n\nRespond in Markdown. Include a section at the top titled 'Agent Activity Log' where you list the steps taken. Clearly explain the terms from the search results to the real world."
+                
+                final_resp = self.client.models.generate_content(model=self.model, contents=prompt).text.strip()
+                
+                formatted_logs = "\n".join(logs)
+                responses[slug] = f"### 🕵️‍♂️ Agent Live Log\n{formatted_logs}\n\n---\n\n{final_resp}"
+                continue
+
             primer = self.CHAT_AGENT_GUIDANCE.get(slug, "You are a helpful research agent.")
             prompt = f"{primer}\n\nPaper summary:\n{context['summary']}\n\nRelevant paper excerpt:\n{str(context['full_text'])[:8000]}\n\nResearcher instruction:\n{instruction}\n\nRespond in Markdown with concise bullet points."
 

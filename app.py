@@ -38,6 +38,7 @@ def get_agents():
         {"slug": "novelty", "label": "Novelty Analyst", "description": "Probe originality and impact potential."},
         {"slug": "glossary", "label": "Glossary Curator", "description": "Break down dense terminology."},
         {"slug": "related", "label": "Related Work Scout", "description": "Surface adjacent papers worth reading next."},
+        {"slug": "conference", "label": "Conference Matchmaker", "description": "Search upcoming conferences and evaluate paper fit (Live Web Search)."},
     ]
 
 @app.post("/api/upload")
@@ -71,4 +72,3 @@ async def chat_with_agents(request: ChatRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="127.0.0.1", port=5000, reload=True)
-
