@@ -86,7 +86,7 @@
     #file-input { display: none; }
     .upload-notification {
         margin-bottom: 0.75rem;
-        padding: 0.65rem 0.9rem;
+        padding: 0.65rem 1.5rem 0.65rem 0.9rem;
         border-radius: 0.7rem;
         border: 1px solid #c7d2fe;
         background: #eef2ff;
@@ -96,6 +96,23 @@
         display: none;
         word-wrap: break-word;
         word-break: break-word;
+        position: relative;
+    }
+    .close-notif {
+        position: absolute;
+        top: 0.35rem;
+        right: 0.4rem;
+        background: none;
+        border: none;
+        font-size: 1.1rem;
+        cursor: pointer;
+        color: #312e81;
+        opacity: 0.6;
+        line-height: 1;
+        padding: 0;
+    }
+    .close-notif:hover {
+        opacity: 1;
     }
 
     .agents-header {
@@ -654,7 +671,7 @@
 
     function showUploadNotification(message) {
         if (!uploadNotifEl) return;
-        uploadNotifEl.innerHTML = message;
+        uploadNotifEl.innerHTML = `<button class="close-notif" onclick="hideUploadNotification()" aria-label="Dismiss">&times;</button>` + message;
         uploadNotifEl.style.display = 'block';
     }
 

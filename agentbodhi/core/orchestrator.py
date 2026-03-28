@@ -94,7 +94,7 @@ class ResearchOrchestrator:
             progress_callback("Running specialized agents (Hybrid Search)...", 0.3)
 
         results: Dict[str, object] = {}
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {
                 "citations": executor.submit(self.citation_agent.execute, paper_text, max_citations),
                 "weaknesses": executor.submit(self.methodology_agent.execute, paper_text),
@@ -299,7 +299,7 @@ Return ONLY valid JSON in this format:
         paper_text = str(context["full_text"])
         paper_summary = str(context["summary"])
         
-        with ThreadPoolExecutor(max_workers=len(agent_slugs)) as executor:
+        with ThreadPoolExecutor(max_workers=1) as executor:
             future_to_agent = {}
             if "citations" in agent_slugs:
                 future_to_agent[executor.submit(self.citation_agent.execute, paper_text, 10)] = "Citations"
