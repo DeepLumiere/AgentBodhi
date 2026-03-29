@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
     agents: List[str]
     session_id: str
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def read_root():
     return FileResponse("static/index.html")
 
@@ -99,4 +99,6 @@ async def analyze_full_paper(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=5000, reload=True)
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    uvicorn.run("app:app", host="0.0.0.0", port=port)
