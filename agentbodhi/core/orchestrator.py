@@ -42,7 +42,7 @@ class ResearchOrchestrator:
 
     def __init__(self, gemini_key: str, tavily_key: str):
         self.client = genai.Client(api_key=gemini_key)
-        self.model = "gemma-3-27b-it"#"gemini-3-flash-preview"#gemini-3.1-flash-lite-preview" #"gemini-2.5-flash-lite"
+        self.model = "gemini-3.1-flash-lite-preview" #"gemini-3-flash-preview"#"gemini-2.5-flash-lite" "gemma-3-27b-it"#
         self.tavily = TavilyClient(api_key=tavily_key)
         
         self.citation_agent = CitationAgent(self.client, self.model)
@@ -96,11 +96,11 @@ class ResearchOrchestrator:
         results: Dict[str, object] = {}
         with ThreadPoolExecutor(max_workers=1) as executor:
             futures = {
-                "citations": executor.submit(self.citation_agent.execute, paper_text, max_citations),
-                "weaknesses": executor.submit(self.methodology_agent.execute, paper_text),
+                "citations": executor.submit(self.citation_agent.execute, paper_text[:8000], max_citations),
+                "weaknesses": executor.submit(self.methodology_agent.execute, paper_text[:8000]),
                 "sota": executor.submit(self.sota_agent.execute, paper_summary, paper_text[:5000]),
                 "novelty": executor.submit(self.novelty_agent.execute, paper_summary, paper_text[:8000]),
-                "glossary": executor.submit(self.glossary_agent.execute, paper_text, glossary_terms),
+                "glossary": executor.submit(self.glossary_agent.execute, paper_text[:8000], glossary_terms),
                 "related": executor.submit(self.related_work_agent.execute, paper_summary, 5)
             }
 
@@ -108,7 +108,8 @@ class ResearchOrchestrator:
             total = len(futures)
             for key, future in futures.items():
                 try:
-                    results[key] = future.result(timeout=60)
+                    # Increased timeout to prevent serial execution from timing out the later models
+                    results[key] = future.result(timeout=1200)
                 except Exception as exc:
                     logger.error("Agent %s failed: %s", key, exc)
                     results[key] = [] if key != "sota" else {}
@@ -302,15 +303,15 @@ Return ONLY valid JSON in this format:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future_to_agent = {}
             if "citations" in agent_slugs:
-                future_to_agent[executor.submit(self.citation_agent.execute, paper_text, 10)] = "Citations"
+                future_to_agent[executor.submit(self.citation_agent.execute, paper_text[:8000], 10)] = "Citations"
             if "methodology" in agent_slugs:
-                future_to_agent[executor.submit(self.methodology_agent.execute, paper_text)] = "Methodology"
+                future_to_agent[executor.submit(self.methodology_agent.execute, paper_text[:8000])] = "Methodology"
             if "sota" in agent_slugs:
                 future_to_agent[executor.submit(self.sota_agent.execute, paper_summary, paper_text[:5000])] = "SOTA"
             if "novelty" in agent_slugs:
                 future_to_agent[executor.submit(self.novelty_agent.execute, paper_summary, paper_text[:8000])] = "Novelty"
             if "glossary" in agent_slugs:
-                future_to_agent[executor.submit(self.glossary_agent.execute, paper_text, 10)] = "Glossary"
+                future_to_agent[executor.submit(self.glossary_agent.execute, paper_text[:8000], 10)] = "Glossary"
             if "related" in agent_slugs:
                 future_to_agent[executor.submit(self.related_work_agent.execute, paper_summary, 5)] = "Related Work"
             if "conference" in agent_slugs:
@@ -319,7 +320,7 @@ Return ONLY valid JSON in this format:
             for future in as_completed(future_to_agent):
                 agent_name = future_to_agent[future]
                 try:
-                    result = future.result(timeout=60)
+                    result = future.result(timeout=1200)
                     agent_results[agent_name] = result
                     logs.append(f"✅ **{agent_name} Agent**: Execution completed successfully.")
                 except Exception as exc:

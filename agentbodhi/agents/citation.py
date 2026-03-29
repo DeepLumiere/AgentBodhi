@@ -1,10 +1,12 @@
 import json
 import logging
 from typing import Dict, List, Optional
+import time
 
 import arxiv
 
 from ..core.models import Citation
+from ..core.utils import shared_arxiv_client
 from .base import ResearchAgent
 
 logger = logging.getLogger(__name__)
@@ -60,8 +62,12 @@ Return ONLY the JSON array, no explanation."""
 
             search = arxiv.Search(query=f'ti:"{title}"', max_results=1,
                                   sort_by=arxiv.SortCriterion.Relevance)
-            client = arxiv.Client(page_size=1, delay_seconds=3, num_retries=5)
-            results = list(client.results(search))
+            time.sleep(3) # Extra delay protection
+            try:
+                results = list(shared_arxiv_client.results(search))
+            except Exception as e:
+                logger.error(f"Citation verification error: {e}")
+                results = []
 
             if results:
                 paper = results[0]

@@ -1,8 +1,9 @@
 import logging
+import time
 
 import arxiv
 
-from ..core.utils import clean_query
+from ..core.utils import clean_query, shared_arxiv_client
 from .base import ResearchAgent
 
 logger = logging.getLogger(__name__)
@@ -25,10 +26,10 @@ class RelatedWorkAgent(ResearchAgent):
                 max_results=num_papers,
                 sort_by=arxiv.SortCriterion.Relevance
             )
-            client = arxiv.Client(page_size=10, delay_seconds=3, num_retries=5)
+            time.sleep(3) # Extra delay protection
 
             related = []
-            for paper in client.results(search):
+            for paper in shared_arxiv_client.results(search):
                 related.append({
                     'title': paper.title,
                     'url': paper.entry_id,
@@ -40,5 +41,3 @@ class RelatedWorkAgent(ResearchAgent):
         except Exception as e:
             logger.error(f"Related work search error: {e}")
             return []
-
-

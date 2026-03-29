@@ -1,8 +1,10 @@
 import json
 import logging
+import time
 
 import arxiv
 
+from ..core.utils import shared_arxiv_client
 from .base import ResearchAgent
 
 logger = logging.getLogger(__name__)
@@ -20,8 +22,8 @@ class NoveltyAgent(ResearchAgent):
                     max_results=3,
                     sort_by=arxiv.SortCriterion.Relevance
                 )
-                client = arxiv.Client(page_size=10, delay_seconds=3, num_retries=5)
-                arxiv_results = [{"title": p.title, "summary": p.summary[:200]} for p in client.results(search)]
+                time.sleep(3) # Extra delay protection
+                arxiv_results = [{"title": p.title, "summary": p.summary[:200]} for p in shared_arxiv_client.results(search)]
             except Exception:
                 pass
 
@@ -73,4 +75,3 @@ Return ONLY the JSON."""
         except Exception as e:
             logger.error(f"Novelty assessment error: {e}")
             return {'novelty_score': 0, 'error': str(e)}
-

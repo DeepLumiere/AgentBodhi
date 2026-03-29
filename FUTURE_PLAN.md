@@ -29,6 +29,21 @@ The core strength of Agent Bodhi is its specialized, mixture-of-experts approach
 - **Role**: The "Devil's Advocate".
 - **Tasks**: Actively looks for weak points in the paper such as unbacked claims, poor baseline selections, or conflated variables. It simulates a harsh but fair "Reviewer 2".
 
+### 6. **Code & Open Source Agent** (`github_auditor.py`)
+- **Role**: Technical implementation reviewer.
+- **Tasks**: If a codebase is linked, pulls the README, requirements, and architecture. Evaluates whether the code actually matches the paper's claims and algorithmic descriptions.
+- **Output**: A usability score for developers wanting to implement the paper's findings.
+
+### 7. **Conflict of Interest & Funding Agent** (`funding.py`)
+- **Role**: Transparency auditor.
+- **Tasks**: Analyzes author affiliations, grant numbers, and industry ties to detect potential bias (e.g., a paper on AI safety funded heavily by a corporate AI lab).
+- **Output**: A transparency report highlighting potential conflicts.
+
+### 8. **Cross-Disciplinary Agent** (`bridge.py`)
+- **Role**: Innovation translator.
+- **Tasks**: Takes highly specialized papers (e.g., quantum computing) and maps their methodologies to other fields (e.g., drug discovery).
+- **Output**: "How this applies to..." sections for researchers outside the paper's immediate domain.
+
 ---
 
 ## 🚀 Advanced Workflows & Features
@@ -55,3 +70,9 @@ Once the agents have finished their comprehensive dashboard analysis, users shou
 
 ### 6. **Visual Citation Tree**
 Enhance the UI by rendering the output of the `citation` and `related_work` agents into an interactive visual graph using libraries like D3.js or Cytoscape, mapping out how the current paper sits within the broader scientific tree.
+
+### 7. **Continuous Paper Monitoring**
+Allow users to "subscribe" to a paper's topic. A scheduled task runs weekly, using ArXiv and Tavily to find new papers that cite or improve upon the original document, sending the user a digest of the SOTA progression.
+
+### 8. **Local LLM Support (Ollama/vLLM)**
+To ensure maximum privacy for unreleased research, add pipeline support for local models. Researchers can analyze their drafts against the agent swarm without sending pre-published data to external APIs.
