@@ -65,6 +65,28 @@ def save_checkpoint(checkpoint_path: Path, checkpoint: Dict[str, Any]) -> None:
         json.dump(checkpoint, f, indent=2, sort_keys=True)
 
 
+# ── Helper & Normalization Functions ────────────────────────────────────────
+
+def normalize_sample_id(val: Any) -> str:
+    """Safely convert sample IDs to string, handling float representation issues (e.g. 1.0 -> '1')."""
+    if val is None or pd.isna(val):
+        return ""
+    if isinstance(val, float):
+        if val.is_integer():
+            return str(int(val))
+    return str(val)
+
+
+def safe_int(val: Any, default: int = 0) -> int:
+    """Safely convert a value to int, handling floats or string numeric representations."""
+    if val is None or pd.isna(val):
+        return default
+    try:
+        return int(float(val))
+    except (ValueError, TypeError):
+        return default
+
+
 # ── Loading & Indexing Tabular CSV Data ─────────────────────────────────────
 
 def load_and_index_csv_data(data_dir: Path) -> Tuple[Dict[Tuple[str, str, int], Dict[str, Any]],
@@ -72,9 +94,37 @@ def load_and_index_csv_data(data_dir: Path) -> Tuple[Dict[Tuple[str, str, int], 
                                                    Dict[Tuple[str, str, int], List[Dict[str, Any]]]]:
     """
     Load trajectory, submission, and turn CSV tables and build fast lookups
-    indexed by (log_file, sample_id, original_epoch).
+    indexed by (log_file, sample_id, original_epoch). Auto-downloads missing CSVs via Hugging Face Storage Bucket.
     """
-    print("\n[CSV Indexer] Loading CSV tables from disk...")
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    csv_filenames = [
+        "trajectory_data.csv",
+        "submission_data.csv",
+        "turn_data.csv",
+    ]
+
+    # Auto-download any missing CSV tables directly from the Hugging Face Storage Bucket
+    for file_name in csv_filenames:
+        target_path = data_dir / file_name
+        if not target_path.exists():
+            print(f"[CSV Indexer] '{file_name}' not found locally. Auto-downloading from HF Bucket...")
+            try:
+                res = subprocess.run([
+                    "hf", "buckets", "cp",
+                    f"hf://buckets/ai-safety-institute/2026-inference-scaling-paper/data/{file_name}",
+                    str(target_path)
+                ], capture_output=True, text=True)
+                if res.returncode != 0:
+                    raise RuntimeError(res.stderr)
+                print(f"[CSV Indexer] Successfully downloaded {file_name}!")
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to auto-download {file_name} from HF Bucket: {e}\n"
+                    f"Ensure you have bucket capabilities."
+                )
+
+    print("\n[CSV Indexer] Loading CSV tables into memory...")
     start_time = time.time()
 
     traj_path = data_dir / "trajectory_data.csv"
@@ -87,53 +137,53 @@ def load_and_index_csv_data(data_dir: Path) -> Tuple[Dict[Tuple[str, str, int], 
     df_turn = pd.read_csv(turn_path, low_memory=False)
 
     # Normalize log file paths to forward slashes
-    df_traj["log_file"] = df_traj["log_file"].str.replace("\\", "/", regex=False)
-    df_sub["log_file"] = df_sub["log_file"].str.replace("\\", "/", regex=False)
-    df_turn["log_file"] = df_turn["log_file"].str.replace("\\", "/", regex=False)
+    df_traj["log_file"] = df_traj["log_file"].astype(str).str.replace("\\", "/", regex=False)
+    df_sub["log_file"] = df_sub["log_file"].astype(str).str.replace("\\", "/", regex=False)
+    df_turn["log_file"] = df_turn["log_file"].astype(str).str.replace("\\", "/", regex=False)
 
     print(f"[CSV Indexer] Processing {len(df_traj)} trajectory rows...")
     traj_lookup = {}
     for row in df_traj.itertuples(index=False, name="Row"):
         row_dict = {k: v for k, v in row._asdict().items() if pd.notna(v)}
         log_file = row_dict.get("log_file")
-        sample_id = str(row_dict.get("sample_id"))
+        sample_id = normalize_sample_id(row_dict.get("sample_id"))
         orig_epoch = row_dict.get("original_epoch")
         if log_file and sample_id and orig_epoch is not None:
-            traj_lookup[(log_file, sample_id, int(orig_epoch))] = row_dict
+            traj_lookup[(log_file, sample_id, safe_int(orig_epoch))] = row_dict
 
     print(f"[CSV Indexer] Processing {len(df_sub)} submission rows...")
     sub_lookup = {}
     for row in df_sub.itertuples(index=False, name="Row"):
         row_dict = {k: v for k, v in row._asdict().items() if pd.notna(v)}
         log_file = row_dict.get("log_file")
-        sample_id = str(row_dict.get("sample_id"))
+        sample_id = normalize_sample_id(row_dict.get("sample_id"))
         orig_epoch = row_dict.get("original_epoch")
         if log_file and sample_id and orig_epoch is not None:
-            key = (log_file, sample_id, int(orig_epoch))
+            key = (log_file, sample_id, safe_int(orig_epoch))
             if key not in sub_lookup:
                 sub_lookup[key] = []
             sub_lookup[key].append(row_dict)
 
     # Sort submissions by submit_number
     for key in sub_lookup:
-        sub_lookup[key].sort(key=lambda x: x.get("submit_number", 0))
+        sub_lookup[key].sort(key=lambda x: safe_int(x.get("submit_number"), 0))
 
     print(f"[CSV Indexer] Processing {len(df_turn)} turn rows...")
     turn_lookup = {}
     for row in df_turn.itertuples(index=False, name="Row"):
         row_dict = {k: v for k, v in row._asdict().items() if pd.notna(v)}
         log_file = row_dict.get("log_file")
-        sample_id = str(row_dict.get("sample_id"))
+        sample_id = normalize_sample_id(row_dict.get("sample_id"))
         orig_epoch = row_dict.get("original_epoch")
         if log_file and sample_id and orig_epoch is not None:
-            key = (log_file, sample_id, int(orig_epoch))
+            key = (log_file, sample_id, safe_int(orig_epoch))
             if key not in turn_lookup:
                 turn_lookup[key] = []
             turn_lookup[key].append(row_dict)
 
     # Sort turns by turn_number
     for key in turn_lookup:
-        turn_lookup[key].sort(key=lambda x: x.get("turn_number", 0))
+        turn_lookup[key].sort(key=lambda x: safe_int(x.get("turn_number"), 0))
 
     elapsed = time.time() - start_time
     print(f"[CSV Indexer] Tables successfully loaded and indexed in {elapsed:.1f}s!")
