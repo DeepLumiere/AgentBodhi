@@ -1,0 +1,12 @@
+
+# Conversion raw data files
+data/*.csv
+data/trajectory_data.csv
+data/submission_data.csv
+data/turn_data.csv
+local_data/
+local_data/**
+conversion_checkpoint.json
+output_schemas/
+output_schemas/**
+*.eval
