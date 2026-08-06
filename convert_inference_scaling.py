@@ -65,6 +65,23 @@ def save_checkpoint(checkpoint_path: Path, checkpoint: Dict[str, Any]) -> None:
         json.dump(checkpoint, f, indent=2, sort_keys=True)
 
 
+def download_file_programmatically(url: str, output_path: Path, token: str = None) -> None:
+    """Download a remote file from Hugging Face bucket programmatically via HTTP GET."""
+    import urllib.request
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        with open(output_path, "wb") as f:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+
+
 # ── Helper & Normalization Functions ────────────────────────────────────────
 
 def normalize_sample_id(val: Any) -> str:
@@ -105,23 +122,19 @@ def load_and_index_csv_data(data_dir: Path) -> Tuple[Dict[Tuple[str, str, int], 
     ]
 
     # Auto-download any missing CSV tables directly from the Hugging Face Storage Bucket
+    hf_token = os.environ.get("HF_TOKEN")
     for file_name in csv_filenames:
         target_path = data_dir / file_name
         if not target_path.exists():
             print(f"[CSV Indexer] '{file_name}' not found locally. Auto-downloading from HF Bucket...")
             try:
-                res = subprocess.run([
-                    "hf", "buckets", "cp",
-                    f"hf://buckets/ai-safety-institute/2026-inference-scaling-paper/data/{file_name}",
-                    str(target_path)
-                ], capture_output=True, text=True)
-                if res.returncode != 0:
-                    raise RuntimeError(res.stderr)
+                url = f"https://huggingface.co/buckets/ai-safety-institute/2026-inference-scaling-paper/resolve/data/{file_name}"
+                download_file_programmatically(url, target_path, token=hf_token)
                 print(f"[CSV Indexer] Successfully downloaded {file_name}!")
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to auto-download {file_name} from HF Bucket: {e}\n"
-                    f"Ensure you have bucket capabilities."
+                    f"Ensure you are authenticated and have HF_TOKEN set if the bucket requires permission."
                 )
 
     print("\n[CSV Indexer] Loading CSV tables into memory...")
@@ -272,14 +285,12 @@ def process_log_file(
     # Step 1: Download raw .eval file
     print(f"\n[{log_relative_path}] Downloading log file...")
     download_start = time.time()
-    res = subprocess.run([
-        "hf", "buckets", "cp",
-        f"hf://buckets/ai-safety-institute/2026-inference-scaling-paper/{log_relative_path}",
-        str(tmp_eval_file)
-    ], capture_output=True, text=True)
-
-    if res.returncode != 0:
-        return False, f"Download failed: {res.stderr}", {}
+    hf_token = os.environ.get("HF_TOKEN")
+    try:
+        url = f"https://huggingface.co/buckets/ai-safety-institute/2026-inference-scaling-paper/resolve/{log_relative_path}"
+        download_file_programmatically(url, tmp_eval_file, token=hf_token)
+    except Exception as e:
+        return False, f"Download failed: {e}", {}
 
     print(f"[{log_relative_path}] Downloaded successfully in {time.time() - download_start:.1f}s.")
 
@@ -474,27 +485,23 @@ def main() -> int:
     # Load and Index Tabular data
     traj_lookup, sub_lookup, turn_lookup = load_and_index_csv_data(Path("data"))
 
-    # Fetch recursive list of .eval files from bucket using hf CLI
-    print("\n[Orchestrator] Fetching recursive list of .eval files from HF Bucket...")
-    res = subprocess.run([
-        "hf", "buckets", "list",
-        "hf://buckets/ai-safety-institute/2026-inference-scaling-paper/logs",
-        "-R"
-    ], capture_output=True, text=True)
+    # Fetch recursive list of .eval files from the HF Bucket manifest logs_manifest.csv programmatically
+    print("\n[Orchestrator] Fetching logs manifest from HF Bucket...")
+    manifest_path = Path("data/logs_manifest.csv")
+    if not manifest_path.exists():
+        try:
+            url = "https://huggingface.co/buckets/ai-safety-institute/2026-inference-scaling-paper/resolve/logs_manifest.csv"
+            download_file_programmatically(url, manifest_path, token=hf_token)
+        except Exception as e:
+            print(f"Error downloading manifest: {e}")
+            return 1
 
-    if res.returncode != 0:
-        print(f"Error listing bucket files: {res.stderr}")
+    try:
+        df_manifest = pd.read_csv(manifest_path)
+        eval_files = df_manifest["log_file"].dropna().str.replace("\\", "/", regex=False).unique().tolist()
+    except Exception as e:
+        print(f"Error reading manifest: {e}")
         return 1
-
-    eval_files = []
-    for line in res.stdout.splitlines():
-        parts = line.strip().split()
-        if len(parts) >= 3:
-            path = parts[-1]
-            if path.endswith(".eval"):
-                # Normalize log file path
-                normalized_path = path.replace("\\", "/")
-                eval_files.append(normalized_path)
 
     print(f"[Orchestrator] Found {len(eval_files)} total log files in the bucket.")
 
