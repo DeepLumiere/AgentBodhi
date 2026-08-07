@@ -559,9 +559,16 @@ def main() -> int:
 
     print(f"[Orchestrator] Found {len(eval_files)} total log files in the bucket.")
 
-    # Filter out files already successfully processed
-    files_to_process = [f for f in eval_files if f not in checkpoint["processed_files"]]
-    print(f"[Orchestrator] {len(eval_files) - len(files_to_process)} already processed. {len(files_to_process)} remaining.")
+    # Filter out files already successfully processed (retry previously failed ones)
+    files_to_process = [
+        f for f in eval_files
+        if f not in checkpoint["processed_files"] or checkpoint["processed_files"][f].get("status") != "success"
+    ]
+    successful_processed = [f for f in eval_files if f in checkpoint["processed_files"] and checkpoint["processed_files"][f].get("status") == "success"]
+    failed_processed = [f for f in eval_files if f in checkpoint["processed_files"] and checkpoint["processed_files"][f].get("status") == "failed"]
+
+    print(f"[Orchestrator] {len(successful_processed)} successfully processed previously, {len(failed_processed)} failed previously.")
+    print(f"[Orchestrator] {len(files_to_process)} files remaining to process.")
 
     if args.limit > 0:
         files_to_process = files_to_process[:args.limit]
