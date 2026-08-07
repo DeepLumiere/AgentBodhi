@@ -444,8 +444,23 @@ def process_log_file(
             for line_data in post_processed_lines:
                 f.write(json.dumps(line_data) + "\n")
 
-    # Step 5: Post-process aggregate (.json) EvaluationLog
+    # Step 5: Post-process aggregate (.json) EvaluationLog and strictly conform to 0.3.0 schema
     evaluation_log_dict = json.loads(evaluation_log.model_dump_json(exclude_none=True))
+
+    # Force schema version to 0.3.0
+    evaluation_log_dict["schema_version"] = "0.3.0"
+
+    # Format evaluation_id exactly as: eval_name/model_id/retrieved_timestamp
+    ret_ts = str(evaluation_log_dict["retrieved_timestamp"])
+    model_id_normalized = model_id.replace("/", "_")
+    evaluation_log_dict["evaluation_id"] = f"{canonical_dataset_name}/{model_id_normalized}/{ret_ts}"
+
+    # Ensure model_info additional_details is strictly present and compliant with 0.3.0 schema enums
+    model_info = evaluation_log_dict.setdefault("model_info", {})
+    model_info["additional_details"] = {
+        "deployment_type": "externally_managed",
+        "model_availability": "closed_weights"
+    }
 
     # Update dataset_name inside each result to canonical dataset name
     for result in evaluation_log_dict.get("evaluation_results", []):
@@ -483,13 +498,18 @@ def process_log_file(
                     details[f"avg_{k}"] = f"{sum(values) / len(values):.2f}"
                     details[f"total_{k}"] = str(sum(values))
 
-    # Strict validation of the aggregate log
+    # Strict validation of the aggregate log against the 0.3.0 schema file using jsonschema
     try:
-        EvaluationLog.model_validate(evaluation_log_dict)
+        import jsonschema
+        # Locate the schema file inside the package
+        schema_path = Path(sys.modules["every_eval_ever"].__file__).parent / "schemas" / "eval.schema.json"
+        with open(schema_path, "r", encoding="utf-8") as f:
+            schema_data = json.load(f)
+        jsonschema.validate(instance=evaluation_log_dict, schema=schema_data)
     except Exception as ve:
         if tmp_eval_file.exists():
             tmp_eval_file.unlink()
-        return False, f"Aggregate schema validation failed: {ve}", {}
+        return False, f"Aggregate schema 0.3.0 validation failed: {ve}", {}
 
     # Write aggregate JSON back to disk in the canonical folder
     canonical_json.parent.mkdir(parents=True, exist_ok=True)
