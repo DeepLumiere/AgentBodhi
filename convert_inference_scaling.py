@@ -30,12 +30,43 @@ from typing import Any, Dict, List, Tuple, Set
 import pandas as pd
 from huggingface_hub import HfApi
 
-# Explicitly import zipfile_zstd to register the ZSTD compression handler in python's zipfile module
-# (This ensures standard zipfile can decompress inspect_ai .eval files compressed with ZSTD)
+# Explicitly import zipfile_zstd and register fallback ZSTD decompression handlers in python's zipfile module
+# (This ensures standard zipfile can decompress inspect_ai .eval files compressed with ZSTD across all Python versions, including Python 3.13 on Windows)
 try:
     import zipfile_zstd
 except ImportError:
     pass
+
+import zipfile
+import zstandard as zstd
+
+ZIP_ZSTANDARD = 93
+zipfile.ZIP_ZSTANDARD = ZIP_ZSTANDARD
+
+orig_check = getattr(zipfile, "_check_compression", None)
+def patched_check(compression):
+    if compression == ZIP_ZSTANDARD:
+        return
+    if orig_check:
+        orig_check(compression)
+zipfile._check_compression = patched_check
+
+orig_get_dec = getattr(zipfile, "_get_decompressor", None)
+class ZstdDecompressObjWrapper:
+    def __init__(self, o):
+        self.o = o
+    def __getattr__(self, attr):
+        if attr == 'eof':
+            return False
+        return getattr(self.o, attr)
+
+def patched_get_decompressor(compress_type):
+    if compress_type == ZIP_ZSTANDARD:
+        return ZstdDecompressObjWrapper(zstd.ZstdDecompressor().decompressobj())
+    if orig_get_dec:
+        return orig_get_dec(compress_type)
+    raise NotImplementedError("That compression method is not supported")
+zipfile._get_decompressor = patched_get_decompressor
 
 # Import every_eval_ever types and apply robust monkeypatch for negative latency values
 # (This handles timing drift where total_time < working_time in some logs and prevents validation crashes)
