@@ -386,6 +386,11 @@ def process_log_file(
     canonical_jsonl = canonical_dir / f"{file_uuid}_samples.jsonl"
     canonical_json = canonical_dir / f"{file_uuid}.json"
 
+    # Pre-calculate the exact 0.3.0 canonical evaluation_id
+    ret_ts = str(evaluation_log.retrieved_timestamp)
+    model_id_normalized = model_id.replace("/", "_")
+    canonical_evaluation_id = f"{canonical_dataset_name}/{model_id_normalized}/{ret_ts}"
+
     # Step 4: Post-process instance-level (.jsonl) file to inject submission and turn data
     print(f"[{log_relative_path}] Merging trajectory, submission, and turn CSV data...")
     post_processed_lines = []
@@ -424,6 +429,10 @@ def process_log_file(
         # Now parse and post-process each line
         for line in raw_lines:
             line_data = json.loads(line)
+
+            # Strict consistency: align the sample's evaluation_id with the aggregate 0.3.0 evaluation_id
+            line_data["evaluation_id"] = canonical_evaluation_id
+
             sample_id = normalize_sample_id(line_data.get("sample_id"))
             metadata = line_data.setdefault("metadata", {})
             orig_epoch_str = metadata.get("epoch", "1")
@@ -554,6 +563,56 @@ def process_log_file(
     with open(canonical_json, "w", encoding="utf-8") as f:
         json.dump(evaluation_log_dict, f, indent=4)
 
+    # Run the official EEE validator to strictly validate both generated files
+    try:
+        from every_eval_ever.validate import validate_file
+
+        # Validate aggregate .json
+        agg_report = validate_file(canonical_json)
+        # Validate instance .jsonl
+        inst_report = validate_file(canonical_jsonl)
+
+        # Build validation report dictionary
+        validation_report = {
+            "valid": agg_report.valid and inst_report.valid,
+            "aggregate_report": {
+                "file": str(agg_report.file_path),
+                "valid": agg_report.valid,
+                "file_type": agg_report.file_type,
+                "errors": agg_report.errors,
+            },
+            "instance_report": {
+                "file": str(inst_report.file_path),
+                "valid": inst_report.valid,
+                "file_type": inst_report.file_type,
+                "line_count": inst_report.line_count,
+                "errors": inst_report.errors,
+            }
+        }
+
+        # Save validation report to canonical folder
+        report_json_path = canonical_dir / f"{file_uuid}_validation_report.json"
+        with open(report_json_path, "w", encoding="utf-8") as f:
+            json.dump(validation_report, f, indent=4)
+
+        if not validation_report["valid"]:
+            # Delete invalid files to keep target datastore pristine
+            if canonical_json.exists():
+                canonical_json.unlink()
+            if canonical_jsonl.exists():
+                canonical_jsonl.unlink()
+            if report_json_path.exists():
+                report_json_path.unlink()
+            errors_summary = (agg_report.errors or []) + (inst_report.errors or [])
+            raise RuntimeError(f"Validator failed: {errors_summary}")
+
+        print(f"[{log_relative_path}] Validator passed successfully! Report saved to {report_json_path.name}")
+
+    except Exception as val_err:
+        if tmp_eval_file.exists():
+            tmp_eval_file.unlink()
+        return False, f"EEE Validator validation failed: {val_err}", {}
+
     # Clean up raw .eval file
     if tmp_eval_file.exists():
         tmp_eval_file.unlink()
@@ -562,7 +621,8 @@ def process_log_file(
         "dataset_name": canonical_dataset_name,
         "model_id": model_id,
         "total_samples": total_samples,
-        "matched_trajectories": matched_trajectories_count
+        "matched_trajectories": matched_trajectories_count,
+        "validation_report_path": str(canonical_dir / f"{file_uuid}_validation_report.json")
     }
     return True, "Success", stats_summary
 
