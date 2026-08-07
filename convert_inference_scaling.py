@@ -30,6 +30,13 @@ from typing import Any, Dict, List, Tuple, Set
 import pandas as pd
 from huggingface_hub import HfApi
 
+# Explicitly import zipfile_zstd to register the ZSTD compression handler in python's zipfile module
+# (This ensures standard zipfile can decompress inspect_ai .eval files compressed with ZSTD)
+try:
+    import zipfile_zstd
+except ImportError:
+    pass
+
 # Import every_eval_ever types and apply robust monkeypatch for negative latency values
 # (This handles timing drift where total_time < working_time in some logs and prevents validation crashes)
 import every_eval_ever.instance_level_types as ilt
