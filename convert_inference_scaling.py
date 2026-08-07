@@ -30,6 +30,25 @@ from typing import Any, Dict, List, Tuple, Set
 import pandas as pd
 from huggingface_hub import HfApi
 
+# Import every_eval_ever types and apply robust monkeypatch for negative latency values
+# (This handles timing drift where total_time < working_time in some logs and prevents validation crashes)
+import every_eval_ever.instance_level_types as ilt
+
+orig_init_ilt = ilt.Performance.__init__
+
+def patched_init_ilt(self, *args, **kwargs):
+    for field in ['latency_ms', 'time_to_first_token_ms', 'generation_time_ms']:
+        if field in kwargs and kwargs[field] is not None:
+            try:
+                val = float(kwargs[field])
+                if val < 0:
+                    kwargs[field] = 0.0
+            except (ValueError, TypeError):
+                pass
+    orig_init_ilt(self, *args, **kwargs)
+
+ilt.Performance.__init__ = patched_init_ilt
+
 # Import every_eval_ever converter and types
 from every_eval_ever.converters.inspect.adapter import InspectAIAdapter
 from every_eval_ever.eval_types import EvaluationLog
