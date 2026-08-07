@@ -476,6 +476,14 @@ def process_log_file(
             if turn_rows:
                 metadata["turns"] = json.dumps(turn_rows)
 
+            # Ensure sample-level score is strictly within schema bounds [0.0, 1.0] (important for HealthBench continuous scores)
+            if "evaluation" in line_data and "score" in line_data["evaluation"]:
+                try:
+                    s_val = float(line_data["evaluation"]["score"])
+                    line_data["evaluation"]["score"] = max(0.0, min(1.0, s_val))
+                except (ValueError, TypeError):
+                    pass
+
             # Strict validation of each sample line
             try:
                 InstanceLevelEvaluationLog.model_validate(line_data)
@@ -509,10 +517,20 @@ def process_log_file(
         "model_availability": "closed_weights"
     }
 
-    # Update dataset_name inside each result to canonical dataset name
+    # Update dataset_name inside each result to canonical dataset name and clip the score within min_score and max_score bounds
     for result in evaluation_log_dict.get("evaluation_results", []):
         if "source_data" in result:
             result["source_data"]["dataset_name"] = canonical_dataset_name
+
+        # Ensure aggregate score is strictly within schema bounds [min_score, max_score]
+        min_score = result.get("metric_config", {}).get("min_score", 0.0)
+        max_score = result.get("metric_config", {}).get("max_score", 1.0)
+        if "score_details" in result and "score" in result["score_details"]:
+            try:
+                s_val = float(result["score_details"]["score"])
+                result["score_details"]["score"] = max(float(min_score), min(float(max_score), s_val))
+            except (ValueError, TypeError):
+                pass
 
     # Re-compute detailed_evaluation_results checksum and total rows
     if evaluation_log_dict.get("detailed_evaluation_results"):
@@ -590,8 +608,10 @@ def process_log_file(
             }
         }
 
-        # Save validation report to canonical folder
-        report_json_path = canonical_dir / f"{file_uuid}_validation_report.json"
+        # Save validation report locally in data/validation_reports (outside of output_schemas to prevent PR upload)
+        local_reports_dir = Path("data/validation_reports")
+        local_reports_dir.mkdir(parents=True, exist_ok=True)
+        report_json_path = local_reports_dir / f"{file_uuid}_validation_report.json"
         with open(report_json_path, "w", encoding="utf-8") as f:
             json.dump(validation_report, f, indent=4)
 
@@ -606,7 +626,7 @@ def process_log_file(
             errors_summary = (agg_report.errors or []) + (inst_report.errors or [])
             raise RuntimeError(f"Validator failed: {errors_summary}")
 
-        print(f"[{log_relative_path}] Validator passed successfully! Report saved to {report_json_path.name}")
+        print(f"[{log_relative_path}] Validator passed successfully! Report saved locally to {report_json_path}")
 
     except Exception as val_err:
         if tmp_eval_file.exists():
@@ -622,7 +642,7 @@ def process_log_file(
         "model_id": model_id,
         "total_samples": total_samples,
         "matched_trajectories": matched_trajectories_count,
-        "validation_report_path": str(canonical_dir / f"{file_uuid}_validation_report.json")
+        "validation_report_path": str(report_json_path)
     }
     return True, "Success", stats_summary
 
