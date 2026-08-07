@@ -324,11 +324,6 @@ def process_log_file(
     else:
         model_dev, model_name = evaluation_log.model_info.developer or "unknown", model_id
 
-    # The adapter initially writes to a directory based on the parsed dataset name
-    base_dataset_name = evaluation_log.evaluation_results[0].source_data.dataset_name
-    old_dir = output_dir / base_dataset_name / model_dev / model_name
-    physical_jsonl = old_dir / f"{file_uuid}_samples.jsonl"
-
     # We will save the final schemas in the canonical folder structure matching the image
     canonical_dir = output_dir / canonical_dataset_name / model_dev / model_name
     canonical_jsonl = canonical_dir / f"{file_uuid}_samples.jsonl"
@@ -345,79 +340,90 @@ def process_log_file(
     # Collect trajectory rows for summary statistics
     matched_traj_rows = []
 
-    if physical_jsonl.exists():
+    # Find the generated jsonl file recursively to be completely slash and platform-insensitive on Windows
+    physical_jsonl = None
+    for p in output_dir.rglob(f"*{file_uuid}_samples.jsonl"):
+        physical_jsonl = p
+        break
+
+    if physical_jsonl and physical_jsonl.exists():
+        # Read all raw lines into memory first
+        raw_lines = []
         with open(physical_jsonl, "r", encoding="utf-8") as f:
             for line in f:
-                line_data = json.loads(line)
-                sample_id = normalize_sample_id(line_data.get("sample_id"))
-                metadata = line_data.setdefault("metadata", {})
-                orig_epoch_str = metadata.get("epoch", "1")
-                try:
-                    orig_epoch = int(orig_epoch_str)
-                except ValueError:
-                    orig_epoch = 1
+                raw_lines.append(line)
 
-                lookup_key = (log_file_key_path, str(sample_id), orig_epoch)
+        # Safely delete the non-processed file so we can overwrite/move it cleanly (important for Windows file locks)
+        try:
+            physical_jsonl.unlink()
+            # Clean up empty parent folders of old_dir if empty
+            old_dir = physical_jsonl.parent
+            for path in [old_dir, old_dir.parent, old_dir.parent.parent]:
+                if path.exists() and path != output_dir and not any(path.iterdir()):
+                    path.rmdir()
+        except OSError:
+            pass
 
-                # Fetch and merge trajectory metrics
-                traj_row = traj_lookup.get(lookup_key)
-                if traj_row:
-                    matched_trajectories_count += 1
-                    matched_traj_rows.append(traj_row)
-                    # Add to metadata
-                    for k, v in traj_row.items():
-                        if k not in ["eval", "model", "condition", "sample_id", "epoch", "original_epoch", "log_file"]:
-                            metadata[f"traj_{k}"] = str(v)
+        # Now parse and post-process each line
+        for line in raw_lines:
+            line_data = json.loads(line)
+            sample_id = normalize_sample_id(line_data.get("sample_id"))
+            metadata = line_data.setdefault("metadata", {})
+            orig_epoch_str = metadata.get("epoch", "1")
+            try:
+                orig_epoch = int(orig_epoch_str)
+            except ValueError:
+                orig_epoch = 1
 
-                    # Enrich top-level token_usage
-                    token_usage = line_data.setdefault("token_usage", {})
-                    token_usage["input_tokens"] = int(traj_row.get("total_input_tokens_target_model", token_usage.get("input_tokens", 0)))
-                    token_usage["output_tokens"] = int(traj_row.get("total_output_tokens_target_model", token_usage.get("output_tokens", 0)))
-                    token_usage["total_tokens"] = int(traj_row.get("total_tokens_target_model", token_usage.get("total_tokens", 0)))
-                    token_usage["input_tokens_cache_read"] = int(traj_row.get("total_cache_read_tokens_target_model", token_usage.get("input_tokens_cache_read", 0)))
-                    token_usage["input_tokens_cache_write"] = int(traj_row.get("total_cache_write_tokens_target_model", token_usage.get("input_tokens_cache_write", 0)))
+            lookup_key = (log_file_key_path, str(sample_id), orig_epoch)
 
-                    # Enrich evaluation turns/tool calls count
-                    evaluation_sec = line_data.setdefault("evaluation", {})
-                    if "turn_count" in traj_row:
-                        evaluation_sec["num_turns"] = int(traj_row["turn_count"])
+            # Fetch and merge trajectory metrics
+            traj_row = traj_lookup.get(lookup_key)
+            if traj_row:
+                matched_trajectories_count += 1
+                matched_traj_rows.append(traj_row)
+                # Add to metadata
+                for k, v in traj_row.items():
+                    if k not in ["eval", "model", "condition", "sample_id", "epoch", "original_epoch", "log_file"]:
+                        metadata[f"traj_{k}"] = str(v)
 
-                # Fetch and merge submission details (multiple candidate answers per trajectory)
-                sub_rows = sub_lookup.get(lookup_key)
-                if sub_rows:
-                    metadata["submissions"] = json.dumps(sub_rows)
+                # Enrich top-level token_usage
+                token_usage = line_data.setdefault("token_usage", {})
+                token_usage["input_tokens"] = int(traj_row.get("total_input_tokens_target_model", token_usage.get("input_tokens", 0)))
+                token_usage["output_tokens"] = int(traj_row.get("total_output_tokens_target_model", token_usage.get("output_tokens", 0)))
+                token_usage["total_tokens"] = int(traj_row.get("total_tokens_target_model", token_usage.get("total_tokens", 0)))
+                token_usage["input_tokens_cache_read"] = int(traj_row.get("total_cache_read_tokens_target_model", token_usage.get("input_tokens_cache_read", 0)))
+                token_usage["input_tokens_cache_write"] = int(traj_row.get("total_cache_write_tokens_target_model", token_usage.get("input_tokens_cache_write", 0)))
 
-                # Fetch and merge per-turn metrics
-                turn_rows = turn_lookup.get(lookup_key)
-                if turn_rows:
-                    metadata["turns"] = json.dumps(turn_rows)
+                # Enrich evaluation turns/tool calls count
+                evaluation_sec = line_data.setdefault("evaluation", {})
+                if "turn_count" in traj_row:
+                    evaluation_sec["num_turns"] = int(traj_row["turn_count"])
 
-                # Strict validation of each sample line
-                try:
-                    InstanceLevelEvaluationLog.model_validate(line_data)
-                except Exception as ve:
-                    if tmp_eval_file.exists():
-                        tmp_eval_file.unlink()
-                    return False, f"Instance-level schema validation failed for sample_id={sample_id}: {ve}", {}
+            # Fetch and merge submission details (multiple candidate answers per trajectory)
+            sub_rows = sub_lookup.get(lookup_key)
+            if sub_rows:
+                metadata["submissions"] = json.dumps(sub_rows)
 
-                post_processed_lines.append(line_data)
-                total_samples += 1
+            # Fetch and merge per-turn metrics
+            turn_rows = turn_lookup.get(lookup_key)
+            if turn_rows:
+                metadata["turns"] = json.dumps(turn_rows)
+
+            # Strict validation of each sample line
+            try:
+                InstanceLevelEvaluationLog.model_validate(line_data)
+            except Exception as ve:
+                return False, f"Instance-level schema validation failed for sample_id={sample_id}: {ve}", {}
+
+            post_processed_lines.append(line_data)
+            total_samples += 1
 
         # Write post-processed .jsonl back to disk in the canonical folder
         canonical_dir.mkdir(parents=True, exist_ok=True)
         with open(canonical_jsonl, "w", encoding="utf-8") as f:
             for line_data in post_processed_lines:
                 f.write(json.dumps(line_data) + "\n")
-
-        # Delete the non-canonical temporary file
-        try:
-            physical_jsonl.unlink()
-            # Clean up old directory structure if empty
-            for path in [old_dir, old_dir.parent, old_dir.parent.parent]:
-                if path.exists() and not any(path.iterdir()):
-                    path.rmdir()
-        except OSError:
-            pass
 
     # Step 5: Post-process aggregate (.json) EvaluationLog
     evaluation_log_dict = json.loads(evaluation_log.model_dump_json(exclude_none=True))
