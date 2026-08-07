@@ -310,17 +310,29 @@ def process_log_file(
             tmp_eval_file.unlink()
         return False, f"Base adapter failed: {e}\n{traceback.format_exc()}", {}
 
-    # Step 3: Find written physical file locations
-    dataset_name = evaluation_log.evaluation_results[0].source_data.dataset_name
+    # Step 3: Find written physical file locations & extract canonical benchmark folder structure
+    # logs/hle/flow_completed_... -> hle, logs/healthbench/flow_completed_... -> healthbench
+    log_parts = log_relative_path.split("/")
+    if len(log_parts) >= 2 and log_parts[0] == "logs":
+        canonical_dataset_name = log_parts[1]
+    else:
+        canonical_dataset_name = evaluation_log.evaluation_results[0].source_data.dataset_name
+
     model_id = evaluation_log.model_info.id
     if "/" in model_id:
         model_dev, model_name = model_id.split("/", 1)
     else:
         model_dev, model_name = evaluation_log.model_info.developer or "unknown", model_id
 
-    physical_dir = Path("output_schemas") / dataset_name / model_dev / model_name
-    physical_jsonl = physical_dir / f"{file_uuid}_samples.jsonl"
-    physical_json = physical_dir / f"{file_uuid}.json"
+    # The adapter initially writes to a directory based on the parsed dataset name
+    base_dataset_name = evaluation_log.evaluation_results[0].source_data.dataset_name
+    old_dir = output_dir / base_dataset_name / model_dev / model_name
+    physical_jsonl = old_dir / f"{file_uuid}_samples.jsonl"
+
+    # We will save the final schemas in the canonical folder structure matching the image
+    canonical_dir = output_dir / canonical_dataset_name / model_dev / model_name
+    canonical_jsonl = canonical_dir / f"{file_uuid}_samples.jsonl"
+    canonical_json = canonical_dir / f"{file_uuid}.json"
 
     # Step 4: Post-process instance-level (.jsonl) file to inject submission and turn data
     print(f"[{log_relative_path}] Merging trajectory, submission, and turn CSV data...")
@@ -337,7 +349,7 @@ def process_log_file(
         with open(physical_jsonl, "r", encoding="utf-8") as f:
             for line in f:
                 line_data = json.loads(line)
-                sample_id = line_data.get("sample_id")
+                sample_id = normalize_sample_id(line_data.get("sample_id"))
                 metadata = line_data.setdefault("metadata", {})
                 orig_epoch_str = metadata.get("epoch", "1")
                 try:
@@ -391,17 +403,34 @@ def process_log_file(
                 post_processed_lines.append(line_data)
                 total_samples += 1
 
-        # Write post-processed .jsonl back to disk
-        with open(physical_jsonl, "w", encoding="utf-8") as f:
+        # Write post-processed .jsonl back to disk in the canonical folder
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+        with open(canonical_jsonl, "w", encoding="utf-8") as f:
             for line_data in post_processed_lines:
                 f.write(json.dumps(line_data) + "\n")
+
+        # Delete the non-canonical temporary file
+        try:
+            physical_jsonl.unlink()
+            # Clean up old directory structure if empty
+            for path in [old_dir, old_dir.parent, old_dir.parent.parent]:
+                if path.exists() and not any(path.iterdir()):
+                    path.rmdir()
+        except OSError:
+            pass
 
     # Step 5: Post-process aggregate (.json) EvaluationLog
     evaluation_log_dict = json.loads(evaluation_log.model_dump_json(exclude_none=True))
 
+    # Update dataset_name inside each result to canonical dataset name
+    for result in evaluation_log_dict.get("evaluation_results", []):
+        if "source_data" in result:
+            result["source_data"]["dataset_name"] = canonical_dataset_name
+
     # Re-compute detailed_evaluation_results checksum and total rows
     if evaluation_log_dict.get("detailed_evaluation_results"):
-        evaluation_log_dict["detailed_evaluation_results"]["checksum"] = get_sha256_hash(physical_jsonl)
+        evaluation_log_dict["detailed_evaluation_results"]["file_path"] = f"data/{canonical_dataset_name}/{model_dev}/{model_name}/{file_uuid}_samples.jsonl"
+        evaluation_log_dict["detailed_evaluation_results"]["checksum"] = get_sha256_hash(canonical_jsonl)
         evaluation_log_dict["detailed_evaluation_results"]["total_rows"] = total_samples
 
     # Summarize aggregate trajectory-level details inside evaluation_results.score_details.details
@@ -437,9 +466,9 @@ def process_log_file(
             tmp_eval_file.unlink()
         return False, f"Aggregate schema validation failed: {ve}", {}
 
-    # Write aggregate JSON back to disk
-    physical_json.parent.mkdir(parents=True, exist_ok=True)
-    with open(physical_json, "w", encoding="utf-8") as f:
+    # Write aggregate JSON back to disk in the canonical folder
+    canonical_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(canonical_json, "w", encoding="utf-8") as f:
         json.dump(evaluation_log_dict, f, indent=4)
 
     # Clean up raw .eval file
@@ -447,7 +476,7 @@ def process_log_file(
         tmp_eval_file.unlink()
 
     stats_summary = {
-        "dataset_name": dataset_name,
+        "dataset_name": canonical_dataset_name,
         "model_id": model_id,
         "total_samples": total_samples,
         "matched_trajectories": matched_trajectories_count
