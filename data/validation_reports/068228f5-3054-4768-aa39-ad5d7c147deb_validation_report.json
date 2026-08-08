@@ -1,0 +1,16 @@
+{
+    "valid": true,
+    "aggregate_report": {
+        "file": "output_schemas/healthbench/openai/gpt-5.4-2026-03-05/068228f5-3054-4768-aa39-ad5d7c147deb.json",
+        "valid": true,
+        "file_type": "aggregate",
+        "errors": []
+    },
+    "instance_report": {
+        "file": "output_schemas/healthbench/openai/gpt-5.4-2026-03-05/068228f5-3054-4768-aa39-ad5d7c147deb_samples.jsonl",
+        "valid": true,
+        "file_type": "instance",
+        "line_count": 10,
+        "errors": []
+    }
+}

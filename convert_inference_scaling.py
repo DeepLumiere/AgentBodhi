@@ -517,6 +517,13 @@ def process_log_file(
         "model_availability": "closed_weights"
     }
 
+    # Override source_metadata section according to user specifications
+    source_metadata = evaluation_log_dict.setdefault("source_metadata", {})
+    source_metadata["source_organization_name"] = "UK AI Security Initiative"
+    source_metadata["source_name"] = "How Inference Compute Shapes Frontier LLM Evaluation"
+    source_metadata["source_organization_url"] = "https://www.aisi.gov.uk/"
+    source_metadata["source_organization_logo_url"] = "https://cdn.prod.website-files.com/663bd486c5e4c81588db7a1d/663bd707cb0214d8b72951b5_5a103bfcb506b52b4e099f3dc675c649_AISI%20Logo%20Colour%20Dark.svg"
+
     # Update dataset_name inside each result to canonical dataset name and clip the score within min_score and max_score bounds
     for result in evaluation_log_dict.get("evaluation_results", []):
         if "source_data" in result:
